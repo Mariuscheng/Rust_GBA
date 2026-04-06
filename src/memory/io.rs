@@ -42,14 +42,23 @@ impl Bus {
             self.io[offset] = (old_val & !write_mask) | (value & write_mask);
         } else if (0x0B0..=0x0DF).contains(&offset) {
             self.write_dma_register_byte(offset, value);
-            
-            // 檢查是否寫入了 DMAxCNT_H (控制位元的高字節)
+        
+            // 檢查是否寫入了 DMAxCNT_H 的高字節 (Bit 15 是 Enable)
             // DMA0: 0x0BB, DMA1: 0x0C7, DMA2: 0x0D3, DMA3: 0x0DF
             if [0x0BB, 0x0C7, 0x0D3, 0x0DF].contains(&offset) {
                 let ch = (offset - 0x0BB) / 12;
-                let start_timing = (value >> 4) & 0x03; // Bit 12-13 移位後在 value 的 bit 4-5
-                if (value & 0x80) != 0 && start_timing == 0 {
-                    self.perform_dma(ch); // 立即執行傳輸！
+                
+                // 使用 control_hi 來進行判斷
+                let control_hi = value; 
+                
+                // Bit 15 是 Enable (0x80)
+                let enabled = (control_hi & 0x80) != 0;
+                // Bit 12-13 是 Start Timing (在 8-bit 的高字節中是 bit 4-5)
+                let start_timing = (control_hi >> 4) & 0x03; 
+        
+                // 如果 Enable 且為 Immediate 模式 (0)，則觸發
+                if enabled && start_timing == 0 {
+                    self.perform_dma(ch); 
                 }
             }
         }
