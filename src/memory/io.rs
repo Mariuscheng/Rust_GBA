@@ -31,6 +31,14 @@ impl Bus {
             self.io[offset] = value;
         }
 
+        if offset == REG_DISPSTAT {
+            // DISPSTAT (0x04000004) 的低 3 位 (0, 1, 2) 是硬體狀態位元，不可寫
+            // 只有位元 3, 4, 5 (中斷啟動) 與 7 (VCount 設定位) 是可寫的
+            let write_mask = 0xF8; // 11111000
+            let old_val = self.io[offset];
+            self.io[offset] = (old_val & !write_mask) | (value & write_mask);
+        }
+
         if (0x0B0..=0x0DF).contains(&offset) {
             self.write_dma_register_byte(offset, value);
         }
