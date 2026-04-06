@@ -41,26 +41,27 @@ impl Bus {
             let old_val = self.io[offset];
             self.io[offset] = (old_val & !write_mask) | (value & write_mask);
         } else if (0x0B0..=0x0DF).contains(&offset) {
+            // 先將數值寫入 io 陣列與 dma 結構
             self.write_dma_register_byte(offset, value);
-        
-            // 檢查是否寫入了 DMAxCNT_H 的高字節 (Bit 15 是 Enable)
+    
+            // 核心修正：檢查是否寫入了 DMAxCNT_H 的高字節 (Bit 15 就在這裡)
             // DMA0: 0x0BB, DMA1: 0x0C7, DMA2: 0x0D3, DMA3: 0x0DF
             if [0x0BB, 0x0C7, 0x0D3, 0x0DF].contains(&offset) {
                 let ch = (offset - 0x0BB) / 12;
                 
-                // 使用 control_hi 來進行判斷
-                let control_hi = value; 
-                
-                // Bit 15 是 Enable (0x80)
-                let enabled = (control_hi & 0x80) != 0;
-                // Bit 12-13 是 Start Timing (在 8-bit 的高字節中是 bit 4-5)
-                let start_timing = (control_hi >> 4) & 0x03; 
-        
-                // 如果 Enable 且為 Immediate 模式 (0)，則觸發
+                // value 是剛剛寫入的 8-bit 高字節
+                // Bit 15 (Enable) 在這個 byte 裡是 0x80
+                // Bit 12-13 (Start Timing) 在這個 byte 裡是 (value >> 4) & 0x03
+                let enabled = (value & 0x80) != 0;
+                let start_timing = (value >> 4) & 0x03;
+    
+                // 模式 0 是 Immediate (立即觸發)
                 if enabled && start_timing == 0 {
+                    println!("[DMA] Immediate Trigger on Channel {}", ch);
                     self.perform_dma(ch); 
                 }
             }
+            return;
         }
     }
 
@@ -134,6 +135,8 @@ impl Bus {
             let irq_enable = self.io[REG_DISPSTAT];
 
             if trigger_vblank {
+                self.process_dma_trigger(1);
+
                 self.process_dma_trigger(1);
                 if (irq_enable & 0x08) != 0 {
                     self.request_interrupt(IRQ_VBLANK);
