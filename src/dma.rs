@@ -5,7 +5,8 @@ pub struct DmaChannel {
     // 來源與目的位址暫存器 (由遊戲設定)
     pub sad: u32,
     pub dad: u32,
-    pub count: u16,
+    pub count: u16,   // 這裡通常對應 CNT_L
+    pub control: u16, // 這裡通常對應 CNT_H
     pub ctrl: u16,
 
     // DMA 執行時使用的內部計數與指標暫存器
@@ -95,6 +96,73 @@ impl DmaChannel {
             }
             2 => {}
             _ => {}
+        }
+    }
+
+    pub fn write_cnt_hi(&mut self, value: u16) -> bool {
+        let old_enabled = self.enabled;
+        self.control = value;
+        self.enabled = (value & 0x8000) != 0;
+
+        // 如果 Enable 從 0 變 1，且 Start Timing 為 0 (Immediate)
+        let start_timing = (value >> 12) & 0x03;
+        if !old_enabled && self.enabled && start_timing == 0 {
+            return true; // 通知 Bus 立即執行
+        }
+        false
+    }
+
+    // 取得源地址步進
+    pub fn src_step(&self) -> i32 {
+        let step = if self.is_32bit() { 4 } else { 2 };
+        match (self.ctrl >> 7) & 0x3 {
+            0 => step,  // Increment
+            1 => -step, // Decrement
+            2 => 0,     // Fixed
+            _ => step,  // Prohibited/Reload
+        }
+    }
+
+    // 取得目標地址步進
+    pub fn dest_step(&self) -> i32 {
+        let step = if self.is_32bit() { 4 } else { 2 };
+        match (self.ctrl >> 5) & 0x3 {
+            0 => step,  // Increment
+            1 => -step, // Decrement
+            2 => 0,     // Fixed
+            _ => step,  // Increment/Reload
+        }
+    }
+
+    pub fn is_32bit(&self) -> bool {
+        (self.ctrl & 0x0400) != 0
+    }
+
+    // 取得地址步進方式 (0=Inc, 1=Dec, 2=Fixed, 3=Reload)
+    pub fn get_dest_ctrl(&self) -> u16 {
+        (self.ctrl >> 5) & 0x03
+    }
+    pub fn get_src_ctrl(&self) -> u16 {
+        (self.ctrl >> 7) & 0x03
+    }
+
+    pub fn src_step_new(&self) -> i32 {
+        let step = if self.is_32bit() { 4 } else { 2 };
+        match (self.ctrl >> 7) & 0x3 {
+            0 => step,  // Increment
+            1 => -step, // Decrement
+            2 => 0,     // Fixed
+            _ => step,  // Prohibited/Reload
+        }
+    }
+
+    pub fn dest_step_new(&self) -> i32 {
+        let step = if self.is_32bit() { 4 } else { 2 };
+        match (self.ctrl >> 5) & 0x3 {
+            0 => step,  // Increment
+            1 => -step, // Decrement
+            2 => 0,     // Fixed
+            _ => step,  // Increment/Reload
         }
     }
 }
