@@ -49,18 +49,6 @@ impl Bus {
         }
     }
 
-    pub fn process_dma_trigger(&mut self, trigger_type: u16) {
-        for channel in 0..4 {
-            let ctrl = self.dma[channel].ctrl;
-            let enabled = self.dma[channel].enabled;
-            let timing = (ctrl >> 12) & 0x3;
-
-            if enabled && timing == trigger_type {
-                self.do_dma_transfer(channel);
-            }
-        }
-    }
-
     fn do_dma_transfer(&mut self, channel: usize) {
         let is_32bit = (self.dma[channel].ctrl & (1 << 10)) != 0;
         let count = self.dma[channel].internal_count;
@@ -135,6 +123,4 @@ impl Bus {
             self.request_interrupt(1 << (8 + channel));
         }
     }
-
-    
 }

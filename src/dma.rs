@@ -142,17 +142,13 @@ impl DmaChannel {
     pub fn get_dest_ctrl(&self) -> u16 {
         (self.ctrl >> 5) & 0x03
     }
-    pub fn get_src_ctrl(&self) -> u16 {
-        (self.ctrl >> 7) & 0x03
-    }
-
-    pub fn src_step_new(&self) -> i32 {
+    pub fn get_src_step(&self) -> i32 {
         let step = if self.is_32bit() { 4 } else { 2 };
-        match (self.ctrl >> 7) & 0x3 {
-            0 => step,  // Increment
-            1 => -step, // Decrement
-            2 => 0,     // Fixed
-            _ => step,  // Prohibited/Reload
+        match (self.ctrl >> 7) & 0x03 {
+            0 => step,   // Increment
+            1 => -step,  // Decrement
+            2 => 0,      // Fixed
+            _ => step,   // Forbidden (通常視為 Increment)
         }
     }
 

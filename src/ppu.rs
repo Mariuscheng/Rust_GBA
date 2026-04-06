@@ -40,14 +40,10 @@ impl Ppu {
     const SCREEN_WIDTH: usize = 240;
     const SCREEN_HEIGHT: usize = 160;
     const TILE_SIZE: u32 = 8;
-    const TILE_SIZE_USIZE: usize = 8;
     const TEXT_SCREENBLOCK_SIZE: u32 = 0x0800;
-    const BG_VRAM_END: u32 = 0x0601_0000;
     const DISPCNT_FORCED_BLANK: u16 = 0x0080;
     const DISPCNT_BG2_ENABLE: u16 = 0x0400;
     const BYTES_PER_PIXEL: usize = 4;
-    const DEBUG_TILE_COLUMNS: usize = 16;
-    const DEBUG_TILE_COUNT: usize = 256;
 
     pub fn new() -> Self {
         Self {
@@ -139,153 +135,6 @@ impl Ppu {
 
     fn tile_byte_size(color_256: bool) -> u32 {
         if color_256 { 64 } else { 32 }
-    }
-
-    fn max_tiles_from_char_base(char_addr: u32, color_256: bool) -> usize {
-        if char_addr >= Self::BG_VRAM_END {
-            return 0;
-        }
-
-        ((Self::BG_VRAM_END - char_addr) / Self::tile_byte_size(color_256)) as usize
-    }
-
-    fn tile_has_visible_pixels(
-        vram: &[u8],
-        char_addr: u32,
-        tile_idx: usize,
-        color_256: bool,
-    ) -> bool {
-        let tile_addr = char_addr + tile_idx as u32 * Self::tile_byte_size(color_256);
-        let byte_count = Self::tile_byte_size(color_256) as usize;
-        for byte_index in 0..byte_count {
-            if Self::read_vram_u8(vram, tile_addr + byte_index as u32) != 0 {
-                return true;
-            }
-        }
-        false
-    }
-
-    fn find_first_non_empty_tile(vram: &[u8], char_addr: u32, color_256: bool) -> Option<usize> {
-        let max_tiles = Self::max_tiles_from_char_base(char_addr, color_256);
-        (0..max_tiles)
-            .find(|tile_idx| Self::tile_has_visible_pixels(vram, char_addr, *tile_idx, color_256))
-    }
-
-    fn collect_referenced_tile_range(
-        io: &[u8; 1024],
-        vram: &[u8],
-        dispcnt: u16,
-    ) -> Option<(usize, usize)> {
-        let mut min_tile = usize::MAX;
-        let mut max_tile = 0usize;
-        let mut found = false;
-
-        for bg in 0..4 {
-            if (dispcnt & Self::bg_enable_mask(bg)) == 0 {
-                continue;
-            }
-
-            let control = Self::read_bg_control(io, bg);
-            let screen_addr =
-                0x0600_0000 + control.screen_base_block as u32 * Self::TEXT_SCREENBLOCK_SIZE;
-            let (bg_width, bg_height) = Self::text_bg_dimensions(control.screen_size);
-            let map_width = (bg_width / Self::TILE_SIZE) as u32;
-            let map_height = (bg_height / Self::TILE_SIZE) as u32;
-
-            for tile_y in 0..map_height {
-                for tile_x in 0..map_width {
-                    let screenblock_offset =
-                        Self::text_bg_screenblock_offset(control.screen_size, tile_x, tile_y);
-                    let map_idx = (tile_y % 32) * 32 + (tile_x % 32);
-                    let entry =
-                        Self::read_text_map_entry(vram, screen_addr + screenblock_offset, map_idx);
-                    let tile_idx = entry.tile_idx as usize;
-                    min_tile = min_tile.min(tile_idx);
-                    max_tile = max_tile.max(tile_idx);
-                    found = true;
-                }
-            }
-        }
-
-        found.then_some((min_tile, max_tile))
-    }
-
-    fn collect_referenced_tile_range_for_bg(
-        io: &[u8; 1024],
-        vram: &[u8],
-        dispcnt: u16,
-        bg: u32,
-    ) -> Option<(usize, usize)> {
-        if (dispcnt & Self::bg_enable_mask(bg)) == 0 {
-            return None;
-        }
-
-        let control = Self::read_bg_control(io, bg);
-        let screen_addr =
-            0x0600_0000 + control.screen_base_block as u32 * Self::TEXT_SCREENBLOCK_SIZE;
-        let (bg_width, bg_height) = Self::text_bg_dimensions(control.screen_size);
-        let map_width = (bg_width / Self::TILE_SIZE) as u32;
-        let map_height = (bg_height / Self::TILE_SIZE) as u32;
-
-        let mut min_tile = usize::MAX;
-        let mut max_tile = 0usize;
-        let mut found = false;
-
-        for tile_y in 0..map_height {
-            for tile_x in 0..map_width {
-                let entry = Self::text_bg_map_entry_at(
-                    vram,
-                    screen_addr,
-                    control.screen_size,
-                    tile_x,
-                    tile_y,
-                );
-                let tile_idx = entry.tile_idx as usize;
-                min_tile = min_tile.min(tile_idx);
-                max_tile = max_tile.max(tile_idx);
-                found = true;
-            }
-        }
-
-        found.then_some((min_tile, max_tile))
-    }
-
-    fn pick_debug_bg(io: &[u8; 1024], vram: &[u8], dispcnt: u16) -> Option<(u32, BgControl)> {
-        for bg in 0..4 {
-            if (dispcnt & Self::bg_enable_mask(bg)) == 0 {
-                continue;
-            }
-
-            let control = Self::read_bg_control(io, bg);
-            let char_addr = 0x0600_0000 + control.char_base_block as u32 * 0x4000;
-            let referenced = Self::collect_referenced_tile_range_for_bg(io, vram, dispcnt, bg);
-            let first_non_empty =
-                Self::find_first_non_empty_tile(vram, char_addr, control.color_256);
-            if referenced.is_some() || first_non_empty.is_some() {
-                return Some((bg, control));
-            }
-        }
-
-        None
-    }
-
-    fn debug_tile_window_start(
-        io: &[u8; 1024],
-        vram: &[u8],
-        dispcnt: u16,
-        char_addr: u32,
-        color_256: bool,
-    ) -> usize {
-        if let Some((min_tile, _max_tile)) = Self::collect_referenced_tile_range(io, vram, dispcnt)
-        {
-            return (min_tile / Self::DEBUG_TILE_COUNT) * Self::DEBUG_TILE_COUNT;
-        }
-
-        if let Some(first_non_empty) = Self::find_first_non_empty_tile(vram, char_addr, color_256) {
-            return (first_non_empty / Self::DEBUG_TILE_COUNT) * Self::DEBUG_TILE_COUNT;
-        }
-
-        0
     }
 
     fn format_vram_bytes(vram: &[u8], start_addr: u32, byte_count: usize) -> String {
@@ -413,12 +262,6 @@ impl Ppu {
     fn clear_scanline(&mut self, y: usize, color: [u8; 4]) {
         for x in 0..Self::SCREEN_WIDTH {
             self.write_pixel_rgba(x, y, color);
-        }
-    }
-
-    fn clear_frame(&mut self, color: [u8; 4]) {
-        for y in 0..Self::SCREEN_HEIGHT {
-            self.clear_scanline(y, color);
         }
     }
 
@@ -577,69 +420,6 @@ impl Ppu {
             );
             self.write_pixel_rgba(x, y, color);
         }
-    }
-
-    pub fn render_debug_tiles(&mut self, bus: &crate::memory::Bus) {
-        let io = &bus.io;
-        let palram = &bus.palram[..];
-        let vram = &bus.vram[..];
-        let dispcnt = Self::read_io_u16(io, 0x0400_0000);
-        let (bg, control) =
-            Self::pick_debug_bg(io, vram, dispcnt).unwrap_or((0, Self::read_bg_control(io, 0)));
-        let char_addr = 0x0600_0000 + control.char_base_block as u32 * 0x4000;
-        let max_tiles = Self::max_tiles_from_char_base(char_addr, control.color_256);
-        let first_non_empty = Self::find_first_non_empty_tile(vram, char_addr, control.color_256);
-        let tile_start = if let Some((min_tile, _)) =
-            Self::collect_referenced_tile_range_for_bg(io, vram, dispcnt, bg)
-        {
-            (min_tile / Self::DEBUG_TILE_COUNT) * Self::DEBUG_TILE_COUNT
-        } else {
-            Self::debug_tile_window_start(io, vram, dispcnt, char_addr, control.color_256)
-        };
-        let tile_end = (tile_start + Self::DEBUG_TILE_COUNT).min(max_tiles);
-        let backdrop = Self::rgb15_to_rgba(Self::read_pal_u16(palram, 0x0500_0000));
-        self.clear_frame(backdrop);
-
-        for tile_idx in tile_start..tile_end {
-            let tile_slot = tile_idx - tile_start;
-            let tile_x_base = (tile_slot % Self::DEBUG_TILE_COLUMNS) * Self::TILE_SIZE_USIZE;
-            let tile_y_base = (tile_slot / Self::DEBUG_TILE_COLUMNS) * Self::TILE_SIZE_USIZE;
-
-            for pixel_y in 0..Self::TILE_SIZE_USIZE {
-                for pixel_x in 0..Self::TILE_SIZE_USIZE {
-                    let color_idx = Self::read_text_bg_pixel(
-                        vram,
-                        char_addr,
-                        tile_idx as u16,
-                        control.color_256,
-                        pixel_x as u32,
-                        pixel_y as u32,
-                    );
-                    if color_idx == 0 {
-                        continue;
-                    }
-
-                    let color =
-                        Self::lookup_bg_palette_color(palram, color_idx, control.color_256, 0);
-                    let x = tile_x_base + pixel_x;
-                    let y = tile_y_base + pixel_y;
-                    if x < Self::SCREEN_WIDTH && y < Self::SCREEN_HEIGHT {
-                        self.write_pixel_rgba(x, y, color);
-                    }
-                }
-            }
-        }
-
-        println!(
-            "[PPU][DebugTiles] BG{} char_base={:08X} 8bpp={} window={}..{} first_non_empty={:?} referenced_range={:?}",
-            bg,
-            char_addr,
-            control.color_256,
-            tile_start,
-            tile_end.saturating_sub(1),
-            first_non_empty,
-            Self::collect_referenced_tile_range_for_bg(io, vram, dispcnt, bg),
-        );
     }
 
     fn render_mode_0_scanline(
