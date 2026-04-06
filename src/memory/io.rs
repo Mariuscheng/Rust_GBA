@@ -135,10 +135,10 @@ impl Bus {
             let irq_enable = self.io[REG_DISPSTAT];
 
             if trigger_vblank {
-                self.process_dma_trigger(1);
-
-                self.process_dma_trigger(1);
-                if (irq_enable & 0x08) != 0 {
+                // 關鍵：通知 Bus 檢查所有設定為 V-Blank (Timing 1) 的 DMA
+                self.process_dma_trigger(1); 
+            
+                if (self.io[0x200] & 0x08) != 0 { // 檢查 IE 暫存器的 VBlank 位元
                     self.request_interrupt(IRQ_VBLANK);
                 }
             }
