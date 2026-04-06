@@ -199,6 +199,16 @@ impl Cpu {
 
         let current_pc = self.regs[15];
 
+        if current_pc >= 0x02000000 && current_pc < 0x03000000 {
+            if !self.trace_log.is_empty() {
+                println!("--- JUMPED TO EWRAM! PC: {:#010X} ---", current_pc);
+                for trace in self.trace_log.iter() {
+                    println!("{}", trace);
+                }
+                self.trace_log.clear(); // Only print once
+            }
+        }
+
         if self.thumb_mode {
             // Thumb 模式：讀取 16-bit
             let instruction = bus.read_u16(current_pc);

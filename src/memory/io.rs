@@ -21,13 +21,16 @@ impl Bus {
         if (BG_SCROLL_START..=BG_SCROLL_END).contains(&offset) {
             self.write_bg_scroll_byte(offset, value);
         } else if offset == 0x202 || offset == 0x203 {
-            self.io[offset] &= !value; // IF 暫存器是寫 1 清零
+            self.io[offset] &= !value; // IF 暫存器：寫 1 清零
         } else if offset == REG_DISPSTAT {
             // 核心修正：DISPSTAT 唯讀位元保護
-            // 0xF8 (11111000) 代表只有第 3-7 位是可寫的
-            let mask = 0xF8;
-            self.io[offset] = (self.io[offset] & !mask) | (value & mask);
+            // Bit 0, 1, 2 是唯讀的狀態位元，不可由軟體寫入
+            // Bit 3, 4, 5 是中斷開啟位元，Bit 7 是 VCount 設定位元，這些是可寫的
+            let write_mask = 0xF8; // 11111000：保護低 3 位不被覆蓋
+            let old_val = self.io[offset];
+            self.io[offset] = (old_val & !write_mask) | (value & write_mask);
         } else if offset != 0x130 && offset != 0x131 {
+            // 其他一般的 I/O 暫存器
             self.io[offset] = value;
         }
 

@@ -41,11 +41,33 @@ fn initialize_boot_memory(bus: &mut Bus) {
     bus.ewram.fill(0);
     bus.iwram.fill(0);
 
+    // HLE BIOS IRQ VECTOR INJECTION
+    // 硬體拋出中斷時，會強制跳轉到 BIOS 的 0x00000018，
+    // 原版 BIOS 會保護暫存器，並轉跳到使用者註冊的 0x03FFFFFC。
+    let fake_bios: [u32; 9] = [
+        0xEA000000, // 0x18: B 0x20
+        0x03FFFFFC, // 0x1C: Data Word
+        0xE92D500F, // 0x20: STMFD SP!, {R0-R3, R12, LR}
+        0xE51F0010, // 0x24: LDR R0, [PC, #-0x10] -> reads 0x1C = 0x03FFFFFC
+        0xE5900000, // 0x28: LDR R0, [R0] -> R0 = user IRQ dispatcher
+        0xE28FE000, // 0x2C: ADD LR, PC, #0 -> LR = 0x34
+        0xE12FFF10, // 0x30: BX R0
+        0xE8BD500F, // 0x34: LDMFD SP!, {R0-R3, R12, LR}
+        0xE25EF004, // 0x38: SUBS PC, LR, #4
+    ];
+    for (i, &word) in fake_bios.iter().enumerate() {
+        let addr = 0x18 + i * 4;
+        bus.bios[addr] = (word & 0xFF) as u8;
+        bus.bios[addr + 1] = ((word >> 8) & 0xFF) as u8;
+        bus.bios[addr + 2] = ((word >> 16) & 0xFF) as u8;
+        bus.bios[addr + 3] = ((word >> 24) & 0xFF) as u8;
+    }
+
     // 2. 清空顯示相關記憶體 (這是 PPU 渲染的基礎)
     bus.vram.fill(0);
     bus.palram.fill(0);
     bus.oam.fill(0);
-    // 關鍵修改：不要讓 PPU 自己去持有一份 VRAM 
+    // 關鍵修改：不要讓 PPU 自己去持有一份 VRAM
     // 如果你的 Ppu 結構體裡還有 vram 欄位，請在這裡刪除對它的 fill 呼叫
     // bus.ppu.vram.fill(0); // <--- 如果有這行，刪掉它，統一用 bus.vram
     bus.ppu.frame_buffer.fill(0);
@@ -62,15 +84,13 @@ fn initialize_boot_memory(bus: &mut Bus) {
         for i in 0x04..0xA0 {
             let logo_byte = bus.rom[i];
             // 有些遊戲會檢查 IWRAM 裡的 Logo 備份
-            bus.iwram[0x3F00 + (i - 0x04)] = logo_byte; 
+            bus.iwram[0x3F00 + (i - 0x04)] = logo_byte;
         }
     }
 }
 
 fn initialize_io_registers(bus: &mut Bus) {
     bus.io.fill(0);
-
-
 
     // 保留目前模擬器依賴的非零 open-bus 預設值，避免未實作寄存器導致除以零。
     for i in 0x10..=0x3F {

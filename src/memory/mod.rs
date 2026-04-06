@@ -389,4 +389,48 @@ impl Bus {
             }
         }
     }
+
+    pub fn perform_dma(&mut self, ch: usize) {
+        // 1. 取得該頻道的設定
+        let (src, dst, count, is_32bit, src_step, dst_step);
+        {
+            let channel = &self.dma[ch];
+            if !channel.enabled { return; }
+            
+            src = channel.sad;
+            dst = channel.dad;
+            count = if channel.count == 0 {
+                if ch == 3 { 0x4000 } else { 0x10000 }
+            } else {
+                channel.count as u32
+            };
+            is_32bit = channel.is_32bit();
+            src_step = channel.src_step();
+            dst_step = channel.dest_step();
+        }
+
+        // 2. 開始搬運
+        let mut current_src = src;
+        let mut current_dst = dst;
+
+        for _ in 0..count {
+            if is_32bit {
+                let val = self.read_u32(current_src);
+                self.write_u32(current_dst, val);
+            } else {
+                let val = self.read_u16(current_src);
+                self.write_u16(current_dst, val);
+            }
+            current_src = (current_src as i32 + src_step) as u32;
+            current_dst = (current_dst as i32 + dst_step) as u32;
+        }
+
+        // 3. 更新狀態：如果不重複，則關閉 DMA
+        if (self.dma[ch].ctrl & 0x0200) == 0 { // Bit 9: Repeat
+            self.dma[ch].enabled = false;
+            // 同時要把 IO 暫存器裡的 Enable bit 清掉
+            let io_offset = 0x0BA + (ch * 12); // 指向 DMAxCNT_H
+            self.io[io_offset + 1] &= 0x7F; 
+        }
+    }
 }
