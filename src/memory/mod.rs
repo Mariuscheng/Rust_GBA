@@ -28,6 +28,16 @@ pub struct Bus {
 }
 
 impl Bus {
+
+    pub fn process_dma_trigger(&mut self, timing: u16) {
+        for i in 0..4 {
+            let start_timing = (self.dma[i].ctrl >> 12) & 0x03;
+            if self.dma[i].enabled && start_timing == timing {
+                self.perform_dma(i);
+            }
+        }
+    }
+
     fn masked_offset(addr: u32, mask: u32, len: usize) -> usize {
         ((addr & mask) as usize) % len
     }
@@ -391,46 +401,58 @@ impl Bus {
     }
 
     pub fn perform_dma(&mut self, ch: usize) {
-        // 1. 取得該頻道的設定
-        let (src, dst, count, is_32bit, src_step, dst_step);
-        {
+        // 1. 先從 dma 陣列中提取必要的資訊，避免同時借用 self
+        let (mut src, mut dst, count, is_32bit, s_step, d_step) = {
             let channel = &self.dma[ch];
             if !channel.enabled { return; }
             
-            src = channel.sad;
-            dst = channel.dad;
-            count = if channel.count == 0 {
-                if ch == 3 { 0x4000 } else { 0x10000 }
+            // 計算實際要搬運的次數 (DMA0-2 最大 0x4000, DMA3 最大 0x10000)
+            let cnt = if channel.count == 0 {
+                if ch == 3 { 0x10000 } else { 0x4000 }
             } else {
                 channel.count as u32
             };
-            is_32bit = channel.is_32bit();
-            src_step = channel.src_step();
-            dst_step = channel.dest_step();
-        }
 
-        // 2. 開始搬運
-        let mut current_src = src;
-        let mut current_dst = dst;
+            (channel.sad, channel.dad, cnt, channel.is_32bit(), channel.src_step(), channel.dest_step())
+        };
 
+        // 2. 提取搬運需要的參數 (注意變數名稱一致)
+        let s_step = self.dma[ch].src_step(); // 之前定義的是 src_step 還是 get_src_step 請確認
+        let d_step = self.dma[ch].dest_step();
+        let is_32bit = self.dma[ch].is_32bit();
+        let count = self.dma[ch].internal_count;
+
+        // 2. 執行循環搬運
         for _ in 0..count {
+            let src = self.dma[ch].internal_sad;
+            let dst = self.dma[ch].internal_dad;
+            
             if is_32bit {
-                let val = self.read_u32(current_src);
-                self.write_u32(current_dst, val);
+                let val = self.read_u32(src);
+                self.write_u32(dst, val);
             } else {
-                let val = self.read_u16(current_src);
-                self.write_u16(current_dst, val);
+                let val = self.read_u16(src);
+                self.write_u16(dst, val);
             }
-            current_src = (current_src as i32 + src_step) as u32;
-            current_dst = (current_dst as i32 + dst_step) as u32;
+    
+            // 更新內部地址 (修正編譯器報錯的 src_step -> s_step)
+            self.dma[ch].internal_sad = (src as i32 + s_step) as u32;
+            self.dma[ch].internal_dad = (dst as i32 + d_step) as u32;
         }
 
-        // 3. 更新狀態：如果不重複，則關閉 DMA
+        // 3. 更新狀態：如果不重複，則關閉 Enable 位元
         if (self.dma[ch].ctrl & 0x0200) == 0 { // Bit 9: Repeat
             self.dma[ch].enabled = false;
-            // 同時要把 IO 暫存器裡的 Enable bit 清掉
-            let io_offset = 0x0BA + (ch * 12); // 指向 DMAxCNT_H
-            self.io[io_offset + 1] &= 0x7F; 
+            // 務必同步更新 io 陣列中的 bit 15，否則遊戲會以為 DMA 還在跑
+            let io_idx = 0xBA + (ch * 12) + 1; // 找到 DMAxCNT_H 的高字節
+            self.io[io_idx] &= 0x7F;
+        } else {
+            // 如果是 Repeat 模式且 Dest Ctrl == 3 (Reload)
+            if ((self.dma[ch].ctrl >> 5) & 0x03) == 3 {
+                 self.dma[ch].internal_dad = self.dma[ch].dad; // 重新載入目標地址
+            }
         }
+
+        println!("[DMA] Channel {} executing: Src: 0x{:08X}, Dst: 0x{:08X}, Count: {}", ch, src, dst, count);
     }
 }
