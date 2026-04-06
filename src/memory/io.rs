@@ -40,10 +40,18 @@ impl Bus {
             let write_mask = 0xF8; // 11111000
             let old_val = self.io[offset];
             self.io[offset] = (old_val & !write_mask) | (value & write_mask);
-        }
-
-        if (0x0B0..=0x0DF).contains(&offset) {
+        } else if (0x0B0..=0x0DF).contains(&offset) {
             self.write_dma_register_byte(offset, value);
+            
+            // 檢查是否寫入了 DMAxCNT_H (控制位元的高字節)
+            // DMA0: 0x0BB, DMA1: 0x0C7, DMA2: 0x0D3, DMA3: 0x0DF
+            if [0x0BB, 0x0C7, 0x0D3, 0x0DF].contains(&offset) {
+                let ch = (offset - 0x0BB) / 12;
+                let start_timing = (value >> 4) & 0x03; // Bit 12-13 移位後在 value 的 bit 4-5
+                if (value & 0x80) != 0 && start_timing == 0 {
+                    self.perform_dma(ch); // 立即執行傳輸！
+                }
+            }
         }
     }
 
